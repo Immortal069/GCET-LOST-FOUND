@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GCET Lost & Found — QR Ticket System</title>
+
+<!-- Fonts: Zilla Slab for headings, Work Sans for body, IBM Plex Mono for ticket IDs -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!-- Firebase (classic/compat build — works when this file is opened directly, unlike the newer "import"-style build) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+
+<style>
+  :root{
+    --board:#DCC9A0;       /* corkboard background */
+    --board-dark:#C9B287;
+    --panel:#FBF7EE;       /* index-card paper */
+    --ink:#24262B;         /* near-black warm charcoal */
+    --ink-soft:#6B6355;    /* muted secondary text */
+    --primary:#2F4858;     /* stamped-ink navy/teal */
+    --primary-dark:#1F323D;
+    --amber:#C98A2C;       /* highlight / new */
+    --unclaimed:#B5432B;   /* rust red tag */
+    --claimed:#3F6C4E;     /* forest green stamp */
+    --dash:#A9987B;        /* perforation line */
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:
+      radial-gradient(circle at 8% 12%, rgba(255,255,255,0.10) 0, transparent 45%),
+      radial-gradient(circle at 92% 85%, rgba(0,0,0,0.06) 0, transparent 40%),
+      var(--board);
+    color:var(--ink);
+    font-family:'Work Sans', sans-serif;
+    line-height:1.5;
+    min-height:100vh;
+  }
+  h1,h2,h3{
+    font-family:'Zilla Slab', serif;
+    margin:0 0 8px 0;
+    font-weight:700;
+    letter-spacing:0.2px;
+  }
+  .wrap{ max-width:760px; margin:0 auto; padding:18px 14px 60px; }
+
+  /* ---------- Header ---------- */
+  header.top{ padding:22px 14px 10px; text-align:center; }
+  .badge{
+    display:inline-block;
+    background:var(--primary);
+    color:#F4EFE2;
+    font-family:'Zilla Slab', serif;
+    font-weight:700;
+    font-size:1.5rem;
+    padding:10px 22px;
+    border-radius:6px;
+    transform:rotate(-1deg);
+    box-shadow:0 3px 0 rgba(0,0,0,0.15);
+  }
+  header.top p{ color:var(--ink-soft); margin:10px 0 0; font-size:0.92rem; }
+
+  nav.tabs{
+    display:flex; gap:8px; flex-wrap:wrap; justify-content:center;
+    margin:18px auto 0; max-width:760px; padding:0 14px;
+  }
+  nav.tabs button{
+    flex:1 1 auto; min-width:120px;
+    background:var(--panel);
+    border:1px solid var(--dash);
+    border-bottom:3px solid var(--dash);
+    color:var(--ink);
+    font-family:'Work Sans', sans-serif;
+    font-weight:600;
+    font-size:0.88rem;
+    padding:10px 8px;
+    border-radius:8px 8px 4px 4px;
+    cursor:pointer;
+  }
+  nav.tabs button.active{
+    background:var(--primary);
+    border-color:var(--primary-dark);
+    border-bottom:3px solid var(--amber);
+    color:#F4EFE2;
+  }
+
+  /* ---------- Cards / panels ---------- */
+  .panel{
+    background:var(--panel);
+    border-radius:var(--radius);
+    padding:20px;
+    box-shadow:0 2px 0 rgba(0,0,0,0.08), 0 8px 18px rgba(0,0,0,0.06);
+    margin-top:16px;
+  }
+  .stat-row{ display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; }
+  .stat-card{
+    flex:1 1 130px;
+    background:var(--panel);
+    border-radius:8px;
+    padding:14px 16px;
+    box-shadow:0 2px 0 rgba(0,0,0,0.08), 0 6px 14px rgba(0,0,0,0.06);
+    position:relative;
+  }
+  .stat-card::before{
+    content:'';
+    position:absolute; top:-5px; left:16px;
+    width:10px; height:10px; border-radius:50%;
+    background:var(--unclaimed);
+    box-shadow:0 1px 2px rgba(0,0,0,0.3);
+  }
+  .stat-card:nth-child(2){ transform:rotate(-0.6deg); }
+  .stat-card:nth-child(3){ transform:rotate(0.6deg); }
+  .stat-card:nth-child(4){ transform:rotate(-0.4deg); }
+  .stat-card .num{ font-family:'Zilla Slab', serif; font-size:1.9rem; font-weight:700; color:var(--primary); }
+  .stat-card .label{ font-size:0.8rem; color:var(--ink-soft); }
+
+  .field{ margin-bottom:14px; }
+  .field label{ display:block; font-weight:600; font-size:0.88rem; margin-bottom:5px; }
+  .field input, .field select, .field textarea{
+    width:100%; padding:10px 11px; border-radius:6px;
+    border:1px solid var(--dash); background:#fff;
+    font-family:'Work Sans', sans-serif; font-size:0.95rem; color:var(--ink);
+  }
+  .field textarea{ resize:vertical; min-height:70px; }
+  .hint{ font-size:0.78rem; color:var(--ink-soft); margin-top:4px; }
+
+  button.btn{
+    background:var(--primary); color:#F4EFE2; border:none;
+    padding:11px 18px; border-radius:6px; font-weight:600; font-size:0.92rem;
+    cursor:pointer; font-family:'Work Sans', sans-serif;
+    border-bottom:3px solid var(--primary-dark);
+  }
+  button.btn.amber{ background:var(--amber); border-bottom-color:#916417; color:#2b1c00; }
+  button.btn.ghost{
+    background:transparent; color:var(--primary); border:1px solid var(--primary);
+    border-bottom:1px solid var(--primary);
+  }
+  button.btn.small{ padding:7px 12px; font-size:0.82rem; }
+  button.btn:disabled{ opacity:0.55; cursor:not-allowed; }
+
+  /* ---------- Ticket / claim-tag styling ---------- */
+  .ticket{
+    display:flex; background:var(--panel); border-radius:10px; overflow:hidden;
+    box-shadow:0 2px 0 rgba(0,0,0,0.08), 0 6px 14px rgba(0,0,0,0.06);
+    margin-top:14px; position:relative;
+  }
+  .ticket-main{ flex:1; padding:14px 16px; }
+  .ticket-stub{
+    width:96px; flex-shrink:0;
+    border-left:2px dashed var(--dash);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:6px; padding:10px 6px; background:rgba(0,0,0,0.02);
+  }
+  .ticket h3{ font-size:1.05rem; margin-bottom:2px; }
+  .ticket .meta{ font-size:0.82rem; color:var(--ink-soft); margin:2px 0; }
+  .tag{
+    display:inline-block; font-size:0.72rem; font-weight:600; padding:3px 9px;
+    border-radius:20px; color:#fff;
+  }
+  .tag.unclaimed{ background:var(--unclaimed); }
+  .tag.claimed{ background:var(--claimed); }
+  .cat-icon{ font-size:1.4rem; }
+
+  .stamp{
+    position:absolute; top:14px; right:16px;
+    font-family:'Zilla Slab', serif; font-weight:700; font-size:1.05rem;
+    padding:5px 12px; border:3px solid var(--claimed); color:var(--claimed);
+    border-radius:6px; transform:rotate(-9deg);
+    opacity:0.85; letter-spacing:1px;
+  }
+
+  /* ---------- misc ---------- */
+  .empty{ text-align:center; color:var(--ink-soft); padding:26px 10px; font-size:0.92rem; }
+  .search-row{ display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+  .search-row input{ flex:2 1 160px; }
+  .search-row select{ flex:1 1 140px; }
+  .banner{
+    padding:10px 14px; border-radius:6px; font-size:0.88rem; margin-top:12px;
+  }
+  .banner.error{ background:#F3D7CE; color:#7A2E1D; border:1px solid var(--unclaimed); }
+  .banner.ok{ background:#DCEADD; color:#1F4A2C; border:1px solid var(--claimed); }
+  footer.app-footer{
+    text-align:center; padding:30px 14px 10px; color:var(--ink-soft); font-size:0.78rem;
+  }
+  footer.app-footer button{
+    background:none; border:none; text-decoration:underline; color:var(--ink-soft);
+    cursor:pointer; font-size:0.78rem; padding:0;
+  }
+  .loading{ text-align:center; padding:40px 10px; color:var(--ink-soft); }
+
+  /* ---------- Credit / about card ---------- */
+  .credit-card{ text-align:center; border-top:3px solid var(--amber); }
+  .credit-card h2{ font-size:1.1rem; }
+  .credit-card a{ color:var(--primary); font-weight:600; text-decoration:none; }
+  .credit-card a:hover{ text-decoration:underline; }
+
+  /* ---------- Admin passcode gate ---------- */
+  .gate-panel{ max-width:380px; margin:50px auto 0; }
+  .gate-panel .btn{ width:100%; margin-top:4px; }
+
+  @media print{
+    header.top, nav.tabs, footer.app-footer, .no-print{ display:none !important; }
+    body{ background:#fff; }
+    .wrap{ padding:0; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <span class="badge">GCET Lost &amp; Found</span>
+  <p>Report it. Tag it. Claim it.</p>
+</header>
+
+<nav class="tabs" id="nav-tabs">
+  <button data-view="dashboard">Dashboard</button>
+  <button data-view="report">Report an item</button>
+  <button data-view="browse">Browse items</button>
+</nav>
+
+<div class="wrap">
+  <div id="banner-area"></div>
+  <div id="view-root"><div class="loading">Connecting to the lost &amp; found board…</div></div>
+</div>
+
+<footer class="app-footer">
+  This board syncs live across every device. Share the board passcode with students so they can use it —
+  keep your admin key private; it's needed for the actions below.
+  <br>
+  <button id="change-passcode-link" type="button">Change board passcode</button> ·
+  <button id="change-owner-key-link" type="button">Change admin key</button> ·
+  <button id="lock-now-link" type="button">Lock app now</button> ·
+  <button id="reset-link" type="button">Reset demo data</button>
+  <br><br>
+  Made by Rishab Kumar — rishabkumar.lado@gmail.com
+</footer>
+
+<script>
+/* =========================================================
+   CAMPUS LOST & FOUND — app logic
+   A beginner-friendly, heavily-commented single-file app.
+   Data now lives in Firebase Firestore, so it's shared live
+   across every browser and device — not just this chat.
+   ========================================================= */
+
+// Your project's public web config (safe to keep in client-side code —
+// real protection comes from Firestore security rules, not from hiding this).
+const firebaseConfig = {
+  apiKey: "AIzaSyDrLyqvYXspx96lay7om8oZk76nBbSHEn8",
+  authDomain: "gcet-lost-found.firebaseapp.com",
+  projectId: "gcet-lost-found",
+  storageBucket: "gcet-lost-found.firebasestorage.app",
+  messagingSenderId: "656049834539",
+  appId: "1:656049834539:web:4e7d36237d9143f5e4786e",
+  measurementId: "G-BK8YRPC96X"
+};
+
+let db = null;
+let firebaseReady = false;
+try{
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+  firebaseReady = true;
+}catch(e){
+  firebaseReady = false;
+}
+
+const CATEGORIES = [
+  { id:'electronics', label:'Electronics',            icon:'💻' },
+  { id:'bags',        label:'Bags & backpacks',        icon:'🎒' },
+  { id:'documents',   label:'ID cards & documents',    icon:'🪪' },
+  { id:'books',       label:'Books & stationery',      icon:'📚' },
+  { id:'bottles',     label:'Bottles & accessories',   icon:'🧴' },
+  { id:'keys',        label:'Keys',                    icon:'🔑' },
+  { id:'clothing',    label:'Clothing',                icon:'🧣' },
+  { id:'other',       label:'Other',                   icon:'📦' }
+];
+
+let itemsDB = {};          // in-memory copy of all items, keyed by ticket ID (kept live by Firestore)
+let currentView = 'dashboard';
+let pendingItemId = null;  // item currently shown in detail view
+let authRecord = null;     // { mode:'hash'|'plain', value:'...' } loaded from Firestore, or null if never set up
+let unlocked = false;      // whether the passcode has been entered correctly this session
+let itemsUnsub = null;     // unsubscribe function for the live items listener
+let seedAttempted = false; // guards against reseeding more than once per load
+
+/* ---------------- passcode gate ---------------- */
+
+async function sha256Hex(text){
+  try{
+    if (!(window.crypto && crypto.subtle)) return null;
+    const enc = new TextEncoder().encode(text);
+    const buf = await crypto.subtle.digest('SHA-256', enc);
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }catch(e){ return null; }
+}
+
+async function loadAuth(){
+  try{
+    const snap = await db.collection('config').doc('admin-auth').get();
+    authRecord = snap.exists ? snap.data() : null;
+  }catch(e){ authRecord = null; }
+}
+
+async function saveAuth(passcode){
+  const hash = await sha256Hex(passcode);
+  const payload = hash ? { mode:'hash', value:hash } : { mode:'plain', value:passcode };
+  authRecord = payload; // usable immediately for this session even if the write below fails
+  try{
+    await db.collection('config').doc('admin-auth').set(payload);
+    return true;
+  }catch(e){
+    return false;
+  }
+}
+
+async function checkAuth(passcode){
+  if (!authRecord) return false;
+  if (authRecord.mode === 'hash'){
+    const h = await sha256Hex(passcode);
+    return !!h && h === authRecord.value;
+  }
+  return passcode === authRecord.value;
+}
+
+/* ---------------- admin key (separate from the shared board passcode) ---------------- */
+/* Everyone gets the board passcode to use the app. Only the owner should know the admin
+   key — it's required for changing the passcode or wiping the board, so a regular user
+   with just the board passcode can't take over admin control. */
+
+let ownerRecord = null;
+
+async function loadOwnerAuth(){
+  try{
+    const snap = await db.collection('config').doc('owner-key').get();
+    ownerRecord = snap.exists ? snap.data() : null;
+  }catch(e){ ownerRecord = null; }
+}
+
+async function saveOwnerAuth(key){
+  const hash = await sha256Hex(key);
+  const payload = hash ? { mode:'hash', value:hash } : { mode:'plain', value:key };
+  ownerRecord = payload;
+  try{
+    await db.collection('config').doc('owner-key').set(payload);
+    return true;
+  }catch(e){ return false; }
+}
+
+async function checkOwnerAuth(key){
+  if (!ownerRecord) return false;
+  if (ownerRecord.mode === 'hash'){
+    const h = await sha256Hex(key);
+    return !!h && h === ownerRecord.value;
+  }
+  return key === ownerRecord.value;
+}
+
+// Gate for admin-only actions. If no admin key exists yet, offers to create one on the spot
+// (so the very first time you use an admin action, you set your private key).
+async function requireOwnerKey(actionLabel){
+  if (!ownerRecord){
+    const setNow = confirm(`No admin key has been set yet. You need one to ${actionLabel}. Set one now? (Keep it private — don't share it with students.)`);
+    if (!setNow) return false;
+    const created = prompt('Create your private admin key (4+ characters):');
+    if (!created || created.length < 4){ showBanner('Admin key needs at least 4 characters — nothing changed.', 'error'); return false; }
+    const saved = await saveOwnerAuth(created);
+    if (!saved) showBanner('Admin key set for this session only — could not save permanently.', 'error');
+    return true;
+  }
+  const entered = prompt(`Enter your admin key to ${actionLabel}:`);
+  if (entered === null) return false;
+  const ok = await checkOwnerAuth(entered);
+  if (!ok) showBanner('Incorrect admin key.', 'error');
+  return ok;
+}
+
+function renderGate(){
+  document.getElementById('nav-tabs').style.display = 'none';
+  document.querySelector('footer.app-footer').style.display = 'none';
+  const root = document.getElementById('view-root');
+
+  if (!authRecord){
+    root.innerHTML = `
+      <div class="panel gate-panel">
+        <h2>Set up admin access</h2>
+        <p class="hint">First time here — choose a passcode. Share it only with people you want to let onto the board; you can change it anytime once you're in.</p>
+        <div class="field"><label for="g-new">New passcode</label><input id="g-new" type="password" autocomplete="new-password" inputmode="text"></div>
+        <div class="field"><label for="g-confirm">Confirm passcode</label><input id="g-confirm" type="password" autocomplete="new-password" inputmode="text"></div>
+        <button class="btn" id="g-setup-submit" type="button">Lock the app with this passcode</button>
+        <div id="gate-msg" class="hint" style="margin-top:10px;"></div>
+      </div>
+    `;
+    const trySetup = async ()=>{
+      document.activeElement && document.activeElement.blur();
+      const a = document.getElementById('g-new').value;
+      const b = document.getElementById('g-confirm').value;
+      if (!a || a.length < 4){ gateMessage('Choose a passcode of at least 4 characters.', true); return; }
+      if (a !== b){ gateMessage('Passcodes do not match.', true); return; }
+      gateMessage('Saving…', false);
+      const persisted = await saveAuth(a);
+      unlocked = true;
+      afterUnlock();
+      if (!persisted){
+        showBanner("Passcode set for this session, but it couldn't be saved permanently — you'll need to set it again next time.", 'error');
+      }
+    };
+    document.getElementById('g-setup-submit').addEventListener('click', trySetup);
+    ['g-new','g-confirm'].forEach(id=>{
+      document.getElementById(id).addEventListener('keydown', (e)=>{ if (e.key === 'Enter') trySetup(); });
+    });
+  } else {
+    root.innerHTML = `
+      <div class="panel gate-panel">
+        <h2>Admin access required</h2>
+        <p class="hint">Enter the passcode to open the lost &amp; found board.</p>
+        <div class="field"><label for="g-pass">Passcode</label><input id="g-pass" type="password" autocomplete="current-password" inputmode="text"></div>
+        <button class="btn" id="g-submit" type="button">Unlock</button>
+        <div id="gate-msg" class="hint" style="margin-top:10px;"></div>
+      </div>
+    `;
+    const tryUnlock = async ()=>{
+      document.activeElement && document.activeElement.blur();
+      const val = document.getElementById('g-pass').value;
+      gateMessage('Checking…', false);
+      const ok = await checkAuth(val);
+      if (ok){ unlocked = true; afterUnlock(); }
+      else { gateMessage('Incorrect passcode — try again.', true); }
+    };
+    document.getElementById('g-submit').addEventListener('click', tryUnlock);
+    document.getElementById('g-pass').addEventListener('keydown', (e)=>{ if (e.key === 'Enter') tryUnlock(); });
+  }
+}
+
+function gateMessage(msg, isError){
+  const el = document.getElementById('gate-msg');
+  if (el){
+    el.textContent = msg;
+    el.style.color = isError ? 'var(--unclaimed)' : 'var(--ink-soft)';
+  }
+  showBanner(msg, isError ? 'error' : 'ok');
+}
+
+async function afterUnlock(){
+  document.getElementById('nav-tabs').style.display = '';
+  document.querySelector('footer.app-footer').style.display = '';
+  await startItemsSync();
+  setView('dashboard');
+}
+
+/* ---------------- live Firestore sync for items ---------------- */
+
+function startItemsSync(){
+  return new Promise((resolve)=>{
+    let first = true;
+    itemsUnsub = db.collection('items').onSnapshot(async (snap)=>{
+      itemsDB = {};
+      snap.forEach(d=>{ itemsDB[d.id] = d.data(); });
+      if (Object.keys(itemsDB).length === 0 && !seedAttempted){
+        seedAttempted = true;
+        await seedDemoItems();
+      }
+      if (first){ first = false; resolve(); }
+      else if (currentView === 'dashboard' || currentView === 'browse'){ render(); }
+    }, (err)=>{
+      showBanner('Live sync error — check your connection.', 'error');
+      if (first){ first = false; resolve(); }
+    });
+  });
+}
+
+async function seedDemoItems(){
+  const now = Date.now();
+  const samples = [
+    { name:'Blue Wildcraft backpack', category:'bags', description:'Navy blue backpack, laptop sleeve inside, small keychain on zip.', location:'Near the library entrance', daysAgo:2 },
+    { name:'Casio FX-991 calculator', category:'electronics', description:'Scientific calculator, name scratched off the back.', location:'ECE Lab, Room 214', daysAgo:1 },
+    { name:'Steel water bottle', category:'bottles', description:'Black 1L steel bottle with a dented cap.', location:'Canteen seating area', daysAgo:4 }
+  ];
+  for (let i=0; i<samples.length; i++){
+    const s = samples[i];
+    const ref = db.collection('items').doc(); // Firestore assigns a unique ID for us
+    const item = {
+      id:ref.id, name:s.name, category:s.category, description:s.description,
+      location:s.location, finderContact:'',
+      dateFound:new Date(now - s.daysAgo*86400000).toISOString().slice(0,10),
+      status:'unclaimed', dateClaimed:null, claimantName:'', claimantContact:''
+    };
+    try{ await ref.set(item); }catch(e){ /* listener will just stay empty if this fails */ }
+  }
+}
+
+/* ---------------- view switching ---------------- */
+
+function setView(view){
+  currentView = view;
+  document.querySelectorAll('#nav-tabs button').forEach(b=>{
+    b.classList.toggle('active', b.dataset.view === view);
+  });
+  render();
+}
+
+document.getElementById('nav-tabs').addEventListener('click', (e)=>{
+  const btn = e.target.closest('button[data-view]');
+  if (btn) setView(btn.dataset.view);
+});
+
+document.getElementById('reset-link').addEventListener('click', async ()=>{
+  const allowed = await requireOwnerKey('reset the board');
+  if (!allowed) return;
+  const typed = prompt('This clears the shared lost & found board for everyone using this app.\nType RESET to confirm:');
+  if (typed !== 'RESET') return;
+  try{
+    const snap = await db.collection('items').get();
+    const batch = db.batch();
+    snap.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }catch(e){ /* fall through and still try to reseed */ }
+  seedAttempted = false;
+  await seedDemoItems();
+  showBanner('Demo data has been reset.', 'ok');
+});
+
+document.getElementById('change-passcode-link').addEventListener('click', async ()=>{
+  const allowed = await requireOwnerKey('change the board passcode');
+  if (!allowed) return;
+  const next = prompt('Enter a new board passcode (4+ characters):');
+  if (next === null) return;
+  if (!next || next.length < 4){ showBanner('Passcode not changed — it needs at least 4 characters.', 'error'); return; }
+  const saved = await saveAuth(next);
+  showBanner(saved ? 'Board passcode updated.' : "Passcode changed for this session, but couldn't be saved permanently.", saved ? 'ok' : 'error');
+});
+
+document.getElementById('change-owner-key-link').addEventListener('click', async ()=>{
+  const allowed = await requireOwnerKey('change the admin key');
+  if (!allowed) return;
+  const next = prompt('Enter a new admin key (4+ characters):');
+  if (next === null) return;
+  if (!next || next.length < 4){ showBanner('Admin key not changed — it needs at least 4 characters.', 'error'); return; }
+  const saved = await saveOwnerAuth(next);
+  showBanner(saved ? 'Admin key updated.' : "Admin key changed for this session, but couldn't be saved permanently.", saved ? 'ok' : 'error');
+});
+
+document.getElementById('lock-now-link').addEventListener('click', ()=>{
+  unlocked = false;
+  if (itemsUnsub) { itemsUnsub(); itemsUnsub = null; }
+  renderGate();
+});
+
+function showBanner(msg, type){
+  const area = document.getElementById('banner-area');
+  area.innerHTML = `<div class="banner ${type}">${escapeHtml(msg)}</div>`;
+  setTimeout(()=>{ if(area.firstChild) area.innerHTML=''; }, 4500);
+}
+
+function escapeHtml(s){
+  const d = document.createElement('div');
+  d.textContent = s ?? '';
+  return d.innerHTML;
+}
+
+function categoryMeta(id){
+  return CATEGORIES.find(c=>c.id===id) || CATEGORIES[CATEGORIES.length-1];
+}
+
+/* ---------------- render router ---------------- */
+
+function render(){
+  const root = document.getElementById('view-root');
+  if (currentView === 'dashboard') return renderDashboard(root);
+  if (currentView === 'report')    return renderReportForm(root);
+  if (currentView === 'browse')    return renderBrowse(root);
+  if (currentView === 'detail')    return renderDetail(root, pendingItemId);
+}
+
+/* ---------------- Dashboard ---------------- */
+
+function renderDashboard(root){
+  const all = Object.values(itemsDB);
+  const unclaimed = all.filter(i=>i.status==='unclaimed');
+  const claimed = all.filter(i=>i.status==='claimed');
+  const recent = [...all].sort((a,b)=> (b.dateFound||'').localeCompare(a.dateFound||'')).slice(0,3);
+
+  root.innerHTML = `
+    <div class="panel">
+      <h2>Board overview</h2>
+      <p class="hint">A quick snapshot of what's on the board right now — updates live as others use it.</p>
+      <div class="stat-row">
+        <div class="stat-card"><div class="num">${all.length}</div><div class="label">Total reported</div></div>
+        <div class="stat-card"><div class="num">${unclaimed.length}</div><div class="label">Waiting to be claimed</div></div>
+        <div class="stat-card"><div class="num">${claimed.length}</div><div class="label">Claimed</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Recently reported</h2>
+      ${recent.length ? recent.map(ticketCard).join('') : `<div class="empty">Nothing reported yet — be the first.</div>`}
+    </div>
+    <div class="panel credit-card">
+      <h2>About this project</h2>
+      <p class="hint">Built by <strong>Rishab Kumar</strong> — B.Tech, GCET (AKTU)</p>
+      <p class="hint">Questions, issues, or feedback: <a href="mailto:rishabkumar.lado@gmail.com">rishabkumar.lado@gmail.com</a></p>
+    </div>
+  `;
+  bindTicketClicks(root);
+}
+
+/* ---------------- Report an item ---------------- */
+
+function renderReportForm(root){
+  root.innerHTML = `
+    <div class="panel">
+      <h2>Report a found item</h2>
+      <p class="hint">Fill this in as soon as you find something so its owner can find it on the board.</p>
+      <form id="report-form">
+        <div class="field">
+          <label for="f-name">Item name</label>
+          <input id="f-name" required placeholder="e.g. Grey umbrella">
+        </div>
+        <div class="field">
+          <label for="f-category">Category</label>
+          <select id="f-category">
+            ${CATEGORIES.map(c=>`<option value="${c.id}">${c.icon} ${c.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-desc">Description</label>
+          <textarea id="f-desc" placeholder="Colour, brand, any identifying marks…"></textarea>
+        </div>
+        <div class="field">
+          <label for="f-location">Where was it found?</label>
+          <input id="f-location" required placeholder="e.g. Near Block C canteen">
+        </div>
+        <div class="field">
+          <label for="f-contact">Your contact (shown to whoever claims this item, so they can reach you)</label>
+          <input id="f-contact" placeholder="Phone or email">
+          <p class="hint">Leave blank if you'd rather they check with the campus office instead.</p>
+        </div>
+        <button class="btn" type="submit">Report this item</button>
+      </form>
+    </div>
+  `;
+  document.getElementById('report-form').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const ref = db.collection('items').doc(); // Firestore assigns a unique ID for us
+    const id = ref.id;
+    const item = {
+      id,
+      name: document.getElementById('f-name').value.trim(),
+      category: document.getElementById('f-category').value,
+      description: document.getElementById('f-desc').value.trim(),
+      location: document.getElementById('f-location').value.trim(),
+      finderContact: document.getElementById('f-contact').value.trim(),
+      dateFound: new Date().toISOString().slice(0,10),
+      status: 'unclaimed', dateClaimed: null, claimantName:'', claimantContact:''
+    };
+    itemsDB[id] = item; // show it immediately, even before the write confirms
+    let ok = true;
+    try{ await ref.set(item); }catch(e){ ok = false; }
+    pendingItemId = id;
+    currentView = 'detail';
+    render();
+    showBanner(ok ? 'Item reported — it\'s now on the board.'
+                  : 'Item saved for this session only — could not reach the shared database.', ok ? 'ok' : 'error');
+  });
+}
+
+/* ---------------- Browse ---------------- */
+
+function renderBrowse(root){
+  root.innerHTML = `
+    <div class="panel">
+      <h2>Browse reported items</h2>
+      <div class="search-row">
+        <input id="b-search" placeholder="Search by name, description or location">
+        <select id="b-category">
+          <option value="">All categories</option>
+          ${CATEGORIES.map(c=>`<option value="${c.id}">${c.icon} ${c.label}</option>`).join('')}
+        </select>
+        <select id="b-status">
+          <option value="">All statuses</option>
+          <option value="unclaimed">Unclaimed</option>
+          <option value="claimed">Claimed</option>
+        </select>
+      </div>
+      <div id="b-results"></div>
+    </div>
+  `;
+  const draw = ()=>{
+    const q = document.getElementById('b-search').value.toLowerCase();
+    const cat = document.getElementById('b-category').value;
+    const status = document.getElementById('b-status').value;
+    let list = Object.values(itemsDB).filter(i=>{
+      const hay = `${i.name} ${i.description} ${i.location}`.toLowerCase();
+      return (!q || hay.includes(q)) && (!cat || i.category===cat) && (!status || i.status===status);
+    }).sort((a,b)=> (b.dateFound||'').localeCompare(a.dateFound||''));
+    const box = document.getElementById('b-results');
+    box.innerHTML = list.length ? list.map(i=>ticketCard(i, {showDelete:true})).join('') : `<div class="empty">No items match that search.</div>`;
+    bindTicketClicks(box);
+  };
+  ['b-search','b-category','b-status'].forEach(id=>{
+    document.getElementById(id).addEventListener('input', draw);
+    document.getElementById(id).addEventListener('change', draw);
+  });
+  draw();
+}
+
+function ticketCard(item, opts){
+  opts = opts || {};
+  const cat = categoryMeta(item.category);
+  return `
+    <div class="ticket" data-id="${item.id}" role="button" tabindex="0">
+      <div class="ticket-main">
+        <span class="tag ${item.status}">${item.status === 'claimed' ? 'Claimed' : 'Unclaimed'}</span>
+        <h3>${escapeHtml(item.name)}</h3>
+        <div class="meta">${cat.icon} ${cat.label} · ${escapeHtml(item.location)}</div>
+        <div class="meta">Found ${escapeHtml(item.dateFound || '')}</div>
+        ${item.status === 'claimed' && item.finderContact ? `<div class="meta">Contact: ${escapeHtml(item.finderContact)}</div>` : ''}
+        ${opts.showDelete ? `<button class="btn small ghost no-print" data-delete-id="${item.id}" type="button" style="margin-top:8px;">Delete</button>` : ''}
+      </div>
+      <div class="ticket-stub">
+        <span class="cat-icon">${cat.icon}</span>
+      </div>
+    </div>
+  `;
+}
+
+function bindTicketClicks(scope){
+  scope.querySelectorAll('.ticket[data-id]').forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      if (e.target.closest('[data-delete-id]')) return; // the delete button has its own handler below
+      pendingItemId = el.dataset.id;
+      currentView = 'detail';
+      render();
+    });
+  });
+  scope.querySelectorAll('[data-delete-id]').forEach(btn=>{
+    btn.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      const id = btn.dataset.deleteId;
+      const item = itemsDB[id];
+      const allowed = await requireOwnerKey('delete an item');
+      if (!allowed) return;
+      const sure = confirm(`Delete "${item ? item.name : id}"? This can't be undone.`);
+      if (!sure) return;
+      try{
+        await db.collection('items').doc(id).delete();
+        showBanner('Item deleted.', 'ok');
+      }catch(e){
+        showBanner('Could not delete — check your connection and try again.', 'error');
+      }
+    });
+  });
+}
+
+/* ---------------- Item detail + claim ---------------- */
+
+function renderDetail(root, id){
+  const item = itemsDB[id];
+  if (!item){
+    root.innerHTML = `<div class="panel"><div class="empty">That item wasn't found — it may have been deleted.</div>
+      <button class="btn ghost" onclick="setView('browse')">Back to browse</button></div>`;
+    return;
+  }
+  const cat = categoryMeta(item.category);
+  root.innerHTML = `
+    <div class="panel" style="position:relative;">
+      ${item.status==='claimed' ? `<div class="stamp">Claimed</div>` : ''}
+      <span class="tag ${item.status}">${item.status==='claimed' ? 'Claimed' : 'Unclaimed'}</span>
+      <h2>${escapeHtml(item.name)}</h2>
+      <div class="meta">${cat.icon} ${cat.label}</div>
+      <p>${escapeHtml(item.description || 'No further description provided.')}</p>
+      <div class="meta"><strong>Found at:</strong> ${escapeHtml(item.location)}</div>
+      <div class="meta"><strong>Date found:</strong> ${escapeHtml(item.dateFound || '')}</div>
+
+      ${item.status==='claimed' ? `
+        <div class="banner ok" style="margin-top:18px;">
+          Claimed by ${escapeHtml(item.claimantName)} on ${escapeHtml(item.dateClaimed)}.<br>
+          ${item.finderContact ? `<strong>Contact the finder:</strong> ${escapeHtml(item.finderContact)}` : 'No contact was left by the finder — check with the campus office.'}
+        </div>
+      ` : `
+        <div class="no-print" style="margin-top:18px;">
+          <button class="btn amber" id="claim-toggle" type="button">This is my item — claim it</button>
+          <p class="hint">Claiming it will reveal the finder's contact so you can arrange pickup.</p>
+          <div id="claim-form-holder"></div>
+        </div>
+      `}
+      <div class="no-print" style="margin-top:16px;">
+        <button class="btn ghost small" onclick="setView('browse')">Back to browse</button>
+      </div>
+    </div>
+  `;
+
+  const toggle = document.getElementById('claim-toggle');
+  if (toggle){
+    toggle.addEventListener('click', ()=>{
+      document.getElementById('claim-form-holder').innerHTML = `
+        <div class="field" style="margin-top:12px;">
+          <label for="c-name">Your full name</label>
+          <input id="c-name" required>
+        </div>
+        <div class="field">
+          <label for="c-contact">Roll number or contact</label>
+          <input id="c-contact" required>
+        </div>
+        <button class="btn" id="c-submit" type="button">Confirm claim</button>
+      `;
+      toggle.disabled = true;
+      document.getElementById('c-submit').addEventListener('click', async ()=>{
+        const name = document.getElementById('c-name').value.trim();
+        const contact = document.getElementById('c-contact').value.trim();
+        if (!name || !contact){
+          showBanner('Please fill in both fields to confirm the claim.', 'error');
+          return;
+        }
+        const dateClaimed = new Date().toISOString().slice(0,10);
+        item.status = 'claimed';
+        item.claimantName = name;
+        item.claimantContact = contact;
+        item.dateClaimed = dateClaimed;
+        let ok = true;
+        try{
+          await db.collection('items').doc(item.id).update({
+            status:'claimed', claimantName:name, claimantContact:contact, dateClaimed
+          });
+        }catch(e){ ok = false; }
+        showBanner(ok ? 'Item marked as claimed — the finder\'s contact is shown below.'
+                      : 'Marked as claimed for this session only — could not reach the shared database.', ok ? 'ok' : 'error');
+        render();
+      });
+    });
+  }
+}
+
+/* ---------------- boot ---------------- */
+
+(async function init(){
+  if (!firebaseReady){
+    document.getElementById('nav-tabs').style.display = 'none';
+    document.querySelector('footer.app-footer').style.display = 'none';
+    document.getElementById('view-root').innerHTML = `
+      <div class="panel gate-panel">
+        <h2>Couldn't connect</h2>
+        <p class="hint">The app couldn't start its connection to the shared database. Check your internet connection and reopen this file.</p>
+      </div>
+    `;
+    return;
+  }
+  await Promise.all([loadAuth(), loadOwnerAuth()]);
+  renderGate();
+})();
+</script>
+</body>
+</html>
